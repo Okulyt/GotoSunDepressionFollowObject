@@ -26,5 +26,5 @@ This is dependent upon your computer's capabilities, since Stellarium does not d
 * Run the script.
 
 * You can change the year/month/day and Stellarium will automatically update the time to the selected sun depression. Once it is finished getting to the time, the selected object will be re-selected (the cross-hairs will reappear).
-// ******************************************************************************************
+
 
