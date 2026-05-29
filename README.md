@@ -25,3 +25,4 @@ A Stellarium script allowing to track up to three objects over a sequence of day
 // the time to the selected sun depression. Once it is finished getting to the time,
 // the selected object will be re-selected (the cross-hairs will reappear).
 // ******************************************************************************************
+
