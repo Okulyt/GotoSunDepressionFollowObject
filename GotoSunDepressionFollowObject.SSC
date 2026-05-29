@@ -1,0 +1,339 @@
+// ******************************************************************************************
+// Stellarium script to go to specified sun depression, either morning or evening,
+// depending upon variable setting, mark a desired object and follow it for a sequence of days.
+// Created by expanding GotoSunDepression (credit see below) by Sven Wienstein, June 8, 2025
+// - Added tracking for second object
+// - 2026-03-24: Shortened the in-chart labels to just the date to reduce text densitiy / overlapping
+// - 2026-05-29: Added a third trackable object, added flags showSunMoonDistance1-3 to calculate and output the objects angular distance from moon and sun
+//
+// GotoSunDepression: by David O'Neil, Aug, 2019. Released to the public domain, for anyone interested.
+// Just leave this 'created by' (or 'originally created by') verbage in the derived work.
+//
+// To use:
+// * Set the date via Stellarium's user interface
+// * Set 'gotoMorning' = true for morning viewing, false for evening
+// * You might want to change the 'core.wait(0.03);' line to another number, so
+// Stellarium has enough time to process and update before checking new positions.
+// This is dependent upon your computer's capabilities, since Stellarium does not
+// do things asynchronously for scripting.
+// * Run the script.
+// * You can change the year/month/day and Stellarium will automatically update
+// the time to the selected sun depression. Once it is finished getting to the time,
+// the selected object will be re-selected (the cross-hairs will reappear).
+// ******************************************************************************************
+objectToSelect = "Jupiter"; //SET THIS ONE (to "" if you want nothing selected)
+// Mercury Venus Mars Jupiter Saturn
+useSecondObject = true;
+secondObjectName = "Venus";
+useThirdObject = true;
+thirdObjectName = "Mars";
+// FLAGS FÜR DIE STEUERUNG DER ABSTANDS-ANZEIGE (TRUE = ANZEIGEN, FALSE = AUSBLENDEN)
+showSunMoonDistance1 = false;
+showSunMoonDistance2 = false;
+showSunMoonDistance3 = false;
+gotoMorning = false; //SET THIS ONE!
+desiredDepression = 6.0; //AND SET THIS ONE! The next chart is useful:
+daysToGo = 6; // Zeitspanne in Tagen
+dayIntervall = 2; // Abstand zwischen Markierungen in Tagen.
+cleanmarksFromPreviousRun = true; // Markierungen vom vorigen Lauf löschen.
+if (cleanmarksFromPreviousRun)
+{
+HighlightMgr.cleanHighlightList();
+LabelMgr.deleteAllLabels();
+}
+// Removed the following two lines because of compatibility issues reported by another user (reason unknown)
+//GridLinesMgr.setFlagHorizonLine(true);
+//LandscapeMgr.setFlagCardinalsPoints(true);
+//These are the arcus visionis values for the planets, and an estimation for Sirius:
+//The planetary values were taken from the Planetary, Lunar, and Stellar Visibility computer
+//program, version 3.1.0, 2006, by Rainer Lange and Noel M. Swerdlow. The newest version
+//should be at alcyone.de.
+//
+// Inner Planets Morning First Morning Last Evening First Evening Last
+// Mercury 13.0° 9.5° 10.5° 11.0°
+// Venus 5.7° 6.0° 6.0° 5.2°
+//
+// Heliacal Rising Heliacal Setting Acronychal Rising Cosmical Setting
+// Object (Morning) (Evening) (Evening) (Morning)
+// Mars 14.5° 13.2° 6.0° 6.0°
+// Jupiter 9.3° 7.4° 6.0° 6.0°
+// Saturn 13.0° 10.0° 8.0° 8.0°
+// Sirius 7.8° 6.5° 4.0° 4.0°
+//
+// In addition, Civil Dusk = 0 - 6°, Nautical = 6 - 12°, Astronomic = 12 - 18°
+desiredDepression = -desiredDepression; //Enter it positively, and switch to negative here.
+sunAzimuth = core.getObjectInfo("Sun").azimuth;
+sunAlt = core.getObjectInfo("Sun").altitude;
+//A 'catch up' time for Stellarium to do its work before re-querying attributes
+waitTime = 0.03;
+if (sunAzimuth >= 180 && sunAzimuth <= 360 && gotoMorning) { //180 - 360 = western sun
+//We need to shift by half day.
+core.setDate("-12 hours");
+}
+else if (sunAzimuth >= 0 && sunAzimuth <= 180 && !gotoMorning) { //eastern sun
+core.setDate("+12 hours");
+}
+core.wait(waitTime); //Let computer catch up.
+sunAzimuth = core.getObjectInfo("Sun").azimuth;
+sunAlt = core.getObjectInfo("Sun").altitude;
+// We now have 4 conditions:
+// 1 - looking for morning, sun above desired condition
+// 2 - looking for morning, sun below desired condition
+// 3 - looking for evening, sun above desired condition
+// 4 - looking for evening, sun below desired condition.
+// For 1 and 4, the sun needs to go backward with respect to its normal forward movement.
+// But each case stands on its own, because one coming from below, the other from above.
+//So we can loop the entire chain, so the user can change the date and Stellarium
+//will automatically update when change is made
+lastDate = "dummy start date";
+core.wait(waitTime);
+storePositionIndex=0; // index variable for array of Alt/Az Positions
+var positionDateStore= new Array();
+var altStore = new Array();
+var aziStore=new Array();
+var secondAltStore = new Array();
+var secondAzStore = new Array();
+var thirdAltStore = new Array();
+var thirdAzStore = new Array();
+// SPEICHER FÜR WINKELABSTÄNDE (SONNE UND MOND)
+var distSunStore = new Array();
+var distMoonStore = new Array();
+var secondDistSunStore = new Array();
+var secondDistMoonStore = new Array();
+var thirdDistSunStore = new Array();
+var thirdDistMoonStore = new Array();
+for (dayCount=0; dayCount<daysToGo; dayCount+= dayIntervall)
+{
+//core.debug ("DC:" + dayCount);
+for (hop=0;hop<dayIntervall;hop++)
+{
+core.setDate("+1 day");
+}
+justFinishedProcessing = false;
+sunAlt = core.getObjectInfo("Sun").altitude;
+while (sunAlt != desiredDepression) {
+specifiedDate = core.getDate();
+if (justFinishedProcessing) {
+lastDate = specifiedDate;
+justFinishedProcessing = false;
+}
+if (specifiedDate != lastDate) {
+//Clear the crosshairs, so you can tell it is processing:
+core.selectObjectByName("", true);
+sunAlt = core.getObjectInfo("Sun").altitude;
+// Case 1:
+if (gotoMorning && sunAlt>desiredDepression) {
+//Go backward first:
+while (sunAlt>desiredDepression) {
+gotoTime("-10 minutes");
+}
+//Then forward:
+while (sunAlt<desiredDepression) {
+gotoTime("+1 minutes");
+}
+//You get the picture...
+while (sunAlt>desiredDepression) {
+gotoTime("-10 seconds");
+}
+while (sunAlt<desiredDepression) {
+gotoTime("+1 seconds");
+}
+while (sunAlt>desiredDepression) {
+gotoTime("-1 seconds");
+}
+sunAlt = desiredDepression; //It has been done, so quit jimmying with it.
+}
+//Case 2, start at morning below
+else if (gotoMorning && sunAlt<desiredDepression) {
+//Go forward first:
+while (sunAlt<desiredDepression) {
+gotoTime("+10 minutes");
+}
+//Then backward:
+while (sunAlt>desiredDepression) {
+gotoTime("-1 minutes");
+}
+//You get the picture...
+while (sunAlt<desiredDepression) {
+gotoTime("+10 seconds");
+}
+while (sunAlt>desiredDepression) {
+gotoTime("-1 seconds");
+}
+sunAlt = desiredDepression; //It has been done, so quit jimmying with it.
+}
+//Case 3, start at evening above
+else if (!gotoMorning && sunAlt>desiredDepression) {
+//Go forward first:
+while (sunAlt>desiredDepression) {
+gotoTime("+10 minutes");
+}
+//Then backward:
+while (sunAlt<desiredDepression) {
+gotoTime("-1 minutes");
+}
+//You get the picture...
+while (sunAlt>desiredDepression) {
+gotoTime("+10 seconds");
+}
+while (sunAlt<desiredDepression) {
+gotoTime("-1 seconds");
+}
+sunAlt = desiredDepression; //It has been done, so quit jimmying with it.
+}
+//Case 4, start at evening below
+else if (!gotoMorning && sunAlt<desiredDepression) {
+//Go backward first:
+while (sunAlt<desiredDepression) {
+gotoTime("-10 minutes");
+}
+//Then forward:
+while (sunAlt>desiredDepression) {
+gotoTime("+1 minutes");
+}
+//You get the picture...
+while (sunAlt<desiredDepression) {
+gotoTime("-10 seconds");
+}
+while (sunAlt>desiredDepression) {
+gotoTime("+1 seconds");
+}
+sunAlt = desiredDepression; //It has been done, so quit jimmying with it.
+}
+justFinishedProcessing = true;
+lastDate = specifiedDate;
+//core.debug(sunAlt);
+// Sichern der mathematischen Referenzpositionen für Sonne und Mond
+var sunInfo = core.getObjectInfo("Sun");
+var moonInfo = core.getObjectInfo("Moon");
+//If you want to add a marker, for showing trajectory day-by-day:
+alt = core.getObjectInfo(objectToSelect).altitude;
+azi = core.getObjectInfo(objectToSelect).azimuth;
+//core.debug("Alt:"+ alt);
+//core.debug("Azi"+ azi);
+altStore[storePositionIndex]=alt;
+aziStore[storePositionIndex]=azi;
+positionDateStore[storePositionIndex] = core.getDate();
+var obj1Info = core.getObjectInfo(objectToSelect);
+distSunStore[storePositionIndex] = getAngularDist(obj1Info, sunInfo);
+distMoonStore[storePositionIndex] = getAngularDist(obj1Info, moonInfo);
+if (useSecondObject)
+{
+var obj2Info = core.getObjectInfo(secondObjectName);
+secondAltStore[storePositionIndex] = obj2Info.altitude;
+secondAzStore[storePositionIndex] = obj2Info.azimuth;
+secondDistSunStore[storePositionIndex] = getAngularDist(obj2Info, sunInfo);
+secondDistMoonStore[storePositionIndex] = getAngularDist(obj2Info, moonInfo);
+}
+if (useThirdObject)
+{
+var obj3Info = core.getObjectInfo(thirdObjectName);
+thirdAltStore[storePositionIndex] = obj3Info.altitude;
+thirdAzStore[storePositionIndex] = obj3Info.azimuth;
+thirdDistSunStore[storePositionIndex] = getAngularDist(obj3Info, sunInfo);
+thirdDistMoonStore[storePositionIndex] = getAngularDist(obj3Info, moonInfo);
+}
+storePositionIndex++;
+//HighlightMgr.addPointAltAzi(alt, azi);
+//HighlightMgr.update(1440);
+//And later, to unhighlight it:
+//HighlightMgr.cleanHighlightList();
+// Unfortunately, highlights move with background, not stay at alt/azi!
+// To overcome this, you will need to store a list of alt/azi values, then
+// plot them at the end of a sequence.
+//Set the crosshairs again, to tell it is done processing:
+core.selectObjectByName(objectToSelect, true);
+core.wait(0.3);
+core.setTimeRate(0); //Lock the sky in place, so we can see it unmoving! 
+}
+core.wait(0.1); //Allow the processor some rest.
+}
+}
+for (indexCount=0; indexCount < storePositionIndex; indexCount++)
+{
+var justDate = positionDateStore[indexCount].split('T');
+// AUSWERTUNG OBJEKT 1
+if (objectToSelect !== "") {
+HighlightMgr.addPointAltAzi(altStore[indexCount], aziStore[indexCount]);
+var labelText1 = " " + justDate;
+if (showSunMoonDistance1) {
+labelText1 += " (S:" + distSunStore[indexCount] + "° M:" + distMoonStore[indexCount] + "°)";
+}
+LabelMgr.labelHorizon(labelText1, aziStore[indexCount], altStore[indexCount], true, 14, "#00ffff");
+}
+// WECHSELSEITIGE AUSGABE UND LABEL-PLATZIERUNG FÜR DIE OBJEKTE 2 UND 3
+if (useSecondObject && useThirdObject)
+{
+var debugStr = positionDateStore[indexCount];
+debugStr += " " + objectToSelect + " Alt/Az:" + altStore[indexCount] + " / " + aziStore[indexCount];
+if (showSunMoonDistance1) {
+debugStr += " (S:" + distSunStore[indexCount] + "° M:" + distMoonStore[indexCount] + "°)";
+}
+debugStr += " " + secondObjectName + " " + secondAltStore[indexCount] + " / " + secondAzStore[indexCount];
+if (showSunMoonDistance2) {
+debugStr += " (S:" + secondDistSunStore[indexCount] + "° M:" + secondDistMoonStore[indexCount] + "°)";
+}
+HighlightMgr.addPointAltAzi(secondAltStore[indexCount], secondAzStore[indexCount]);
+var labelText2 = " " + justDate;
+if (showSunMoonDistance2) {
+labelText2 += " (S:" + secondDistSunStore[indexCount] + "° M:" + secondDistMoonStore[indexCount] + "°)";
+}
+LabelMgr.labelHorizon(labelText2, secondAzStore[indexCount], secondAltStore[indexCount], true, 14, "#20ff20");
+debugStr += " " + thirdObjectName + " " + thirdAltStore[indexCount] + " / " + thirdAzStore[indexCount];
+if (showSunMoonDistance3) {
+debugStr += " (S:" + thirdDistSunStore[indexCount] + "° M:" + thirdDistMoonStore[indexCount] + "°)";
+}
+HighlightMgr.addPointAltAzi(thirdAltStore[indexCount], thirdAzStore[indexCount]);
+var labelText3 = " " + justDate;
+if (showSunMoonDistance3) {
+labelText3 += " (S:" + thirdDistSunStore[indexCount] + "° M:" + thirdDistMoonStore[indexCount] + "°)";
+}
+LabelMgr.labelHorizon(labelText3, thirdAzStore[indexCount], thirdAltStore[indexCount], true, 14, "#ffff00");
+core.debug(debugStr);
+}
+else if (useSecondObject)
+{
+var debugStr = positionDateStore[indexCount];
+debugStr += " " + objectToSelect + " Alt/Az:" + altStore[indexCount] + " / " + aziStore[indexCount];
+if (showSunMoonDistance1) {
+debugStr += " (S:" + distSunStore[indexCount] + "° M:" + distMoonStore[indexCount] + "°)";
+}
+debugStr += " " + secondObjectName + " " + secondAltStore[indexCount] + " / " + secondAzStore[indexCount];
+if (showSunMoonDistance2) {
+debugStr += " (S:" + secondDistSunStore[indexCount] + "° M:" + secondDistMoonStore[indexCount] + "°)";
+}
+HighlightMgr.addPointAltAzi(secondAltStore[indexCount], secondAzStore[indexCount]);
+var labelText2 = " " + justDate;
+if (showSunMoonDistance2) {
+labelText2 += " (S:" + secondDistSunStore[indexCount] + "° M:" + secondDistMoonStore[indexCount] + "°)";
+}
+LabelMgr.labelHorizon(labelText2, secondAzStore[indexCount], secondAltStore[indexCount], true, 14, "#20ff20");
+core.debug(debugStr);
+}
+else
+{
+var debugStr = positionDateStore[indexCount] + " Alt/Az:" + altStore[indexCount] + " / " + aziStore[indexCount];
+if (showSunMoonDistance1) {
+debugStr += " (S:" + distSunStore[indexCount] + "° M:" + distMoonStore[indexCount] + "°)";
+}
+core.debug(debugStr);
+}
+}
+core.debug("End of the sequence!");
+function gotoTime(time) {
+core.setDate(time);
+core.wait(waitTime);
+sunAlt = core.getObjectInfo("Sun").altitude;
+}
+// MATHEMATISCHE HILFSFUNKTION FÜR DEN WINKELABSTAND (SPHÄRISCHE GEOMETRIE)
+function getAngularDist(o1, o2) {
+var r1 = o1.ra * Math.PI / 180;
+var d1 = o1.dec * Math.PI / 180;
+var r2 = o2.ra * Math.PI / 180;
+var d2 = o2.dec * Math.PI / 180;
+var cosDist = Math.sin(d1) * Math.sin(d2) + Math.cos(d1) * Math.cos(d2) * Math.cos(r1 - r2);
+if (cosDist > 1) cosDist = 1;
+if (cosDist < -1) cosDist = -1;
+return (Math.acos(cosDist) * 180 / Math.PI).toFixed(2);
+}
+
